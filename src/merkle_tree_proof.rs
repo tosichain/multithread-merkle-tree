@@ -6,18 +6,17 @@ type HashType = Box<Vec<u8>>;
 type HasherType = sha3::Keccak256;
 
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct MerkleTreeProof{
     m_target_address: AddressType,
     m_log2_target_size: isize,           
     m_target_hash: HashType,
     m_log2_root_size: isize,                 
-    m_root_hash: HashType,              
-    m_sibling_hashes: Vec<HashType>,
+    pub m_root_hash: HashType,              
+    pub m_sibling_hashes: Vec<HashType>,
 }    
 
-impl
-  MerkleTreeProof{
+impl MerkleTreeProof{
 
     pub fn merkle_tree_proof(&mut self, log2_root_size: isize, log2_target_size: isize) {
         self.m_target_address = Default::default();
@@ -25,7 +24,8 @@ impl
         self.m_target_hash  = Default::default();
         self.m_log2_root_size = log2_root_size;
         self.m_root_hash = Default::default();
-        self.m_sibling_hashes = vec![Box::new(vec![cmp::max(0, (log2_root_size - log2_target_size) as u8)])];
+        let len = cmp::max(0, (log2_root_size - log2_target_size) as u8);
+        self.m_sibling_hashes = vec![Box::new(vec![]); len as usize];
         if log2_root_size <= 0 {
             panic!("log2_root_size is not positive");
         }
@@ -82,10 +82,11 @@ impl
         return self.bubble_up(h, &self.get_target_hash().clone()) == self.get_root_hash().clone();
     }
 
-    fn bubble_up(&self, h: &mut HasherType, new_target_hash: &HashType) -> HashType {
-        let mut hash: HashType = Box::new(*(new_target_hash.clone()));
+    pub fn bubble_up(&self, h: &mut HasherType, new_target_hash: &HashType) -> HashType {
+        let mut hash: HashType = new_target_hash.clone();
         for log2_size in self.get_log2_target_size()..self.get_log2_root_size() {
             let bit: bool = (self.get_target_address() & ((1 as AddressType) << log2_size as u64)) != 0;
+
             if (bit) {
                 h.reset();
                 h.update(self.get_sibling_hash(log2_size).as_slice());
@@ -98,7 +99,25 @@ impl
                 hash = Box::new(h.clone().finalize().as_slice().to_vec());
             }
         }
-        return hash;
+        return hash.clone();
+    }
+
+    pub fn bubble_up_self(&mut self, h: &mut HasherType) -> HashType {
+        for log2_size in self.get_log2_target_size()..self.get_log2_root_size() {
+            let bit: bool = (self.get_target_address() & ((1 as AddressType) << log2_size as u64)) != 0;
+            if (bit) {
+                h.reset();
+                h.update(self.get_sibling_hash(log2_size).as_slice());
+                h.update(self.m_target_hash.as_slice());
+                self.m_target_hash = Box::new(h.clone().finalize().as_slice().to_vec());
+            } else {
+                h.reset();
+                h.update(self.m_target_hash.as_slice());
+                h.update(self.get_sibling_hash(log2_size).as_slice());
+                self.m_target_hash = Box::new(h.clone().finalize().as_slice().to_vec());
+            }
+        }
+        return self.m_target_hash.clone();
     }
 
     fn slice(&mut self, h: &mut HasherType, new_log2_root_size: isize,
@@ -123,7 +142,7 @@ impl
         let mut hash: HashType = Box::new(*self.get_target_hash().clone());
         for log2_size in self.get_log2_target_size()..new_log2_target_size {
             let bit: bool  = (self.get_target_address() & ((1 as AddressType) << log2_size)) != 0;
-            if (bit) {
+            if bit {
                 h.reset();
                 h.update(self.get_sibling_hash(log2_size).as_slice());
                 h.update(hash.as_slice());
@@ -154,7 +173,7 @@ impl
         }
         sliced.set_root_hash(&hash);
         sliced.set_target_address((self.get_target_address() >> new_log2_target_size) << new_log2_target_size);
-        if (!sliced.verify(h)) {
+        if !sliced.verify(h) {
             panic!("produced invalid sliced proof");
         }
         return sliced;

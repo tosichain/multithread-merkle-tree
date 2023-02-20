@@ -9,29 +9,28 @@ type HasherType = sha3::Keccak256;
 type HashType = Box<Vec<u8>>;
 type ProofType = MerkleTreeProof;
 
+#[derive(Default)]
 pub struct BackMerkleTree {
 
-    m_log2_root_size: isize,                   
-    m_log2_leaf_size: isize,                   
-    m_leaf_count: AddressType,           
-    m_max_leaves: AddressType,              
-    m_context: Vec<HashType>,       
-    m_pristine_hashes: PristineMerkleTree,
+    pub m_log2_root_size: isize,                   
+    pub m_log2_leaf_size: isize,                   
+    pub m_leaf_count: AddressType,           
+    pub m_max_leaves: AddressType,              
+    pub m_context: Vec<HashType>,       
+    pub m_pristine_hashes: PristineMerkleTree,
 
 }
 
 impl BackMerkleTree {
-    fn back_merkle_tree(&mut self, log2_root_size: isize, log2_leaf_size: isize, log2_word_size: isize) {
+    pub fn back_merkle_tree(&mut self, log2_root_size: isize, log2_leaf_size: isize, log2_word_size: isize) {
         self.m_log2_root_size = log2_root_size;
         self.m_log2_leaf_size = log2_leaf_size;
         self.m_leaf_count = 0;
         self.m_max_leaves = (1 as AddressType) << (log2_root_size - log2_leaf_size);
-        self.m_context = vec![Box::new(vec![cmp::max(1 as isize, log2_root_size - log2_leaf_size + 1) as u8])];
-        self.m_pristine_hashes = PristineMerkleTree {
-            m_log2_root_size: log2_root_size,
-            m_log2_word_size: log2_word_size,
-            m_hashes: Default::default(),
-        };
+        let len = cmp::max(1 as isize, log2_root_size - log2_leaf_size + 1) as usize;
+        self.m_context = vec![Box::new(vec![]); len];
+        self.m_pristine_hashes = PristineMerkleTree::default();
+        self.m_pristine_hashes.pristine_merkle_tree(log2_root_size, log2_word_size);
 
         if log2_root_size < 0 {
             panic!("log2_root_size is negative");
@@ -103,7 +102,7 @@ impl BackMerkleTree {
         }
     }
 
-    fn get_next_leaf_proof(&self) -> ProofType {
+    pub fn get_next_leaf_proof(&self) -> ProofType {
         let depth = self.m_log2_root_size - self.m_log2_leaf_size;
         if self.m_leaf_count >= self.m_max_leaves {
             panic!("tree is full");
