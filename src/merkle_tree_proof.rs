@@ -158,7 +158,7 @@ impl MerkleTreeProof{
         for log2_size in new_log2_target_size..new_log2_root_size {
             let bit: bool = (self.get_target_address() & ((1 as AddressType) << log2_size)) != 0;
             let sibling_hash: &HashType = self.get_sibling_hash(log2_size);
-            if (bit) {
+            if bit {
                 h.reset();
                 h.update(sibling_hash.as_slice());
                 h.update(hash.as_slice());

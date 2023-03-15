@@ -9,7 +9,7 @@ type HasherType = sha3::Keccak256;
 type HashType = Box<Vec<u8>>;
 type ProofType = MerkleTreeProof;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct BackMerkleTree {
 
     pub m_log2_root_size: isize,                   

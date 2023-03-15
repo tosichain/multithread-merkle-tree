@@ -4,7 +4,7 @@ use sha3::Digest;
 type HasherType = sha3::Keccak256;
 type HashType = Box<Vec<u8>>;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct PristineMerkleTree {
     pub m_log2_root_size: isize,            
     pub m_log2_word_size: isize,           

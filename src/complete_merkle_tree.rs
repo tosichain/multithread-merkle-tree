@@ -10,7 +10,7 @@ type HashType = Box<Vec<u8>>;
 type ProofType = MerkleTreeProof;
 type LevelType = Vec<HashType>;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct CompleteMerkleTree {
     pub m_log2_root_size: isize,        
     pub m_log2_leaf_size: isize,
@@ -100,17 +100,17 @@ impl CompleteMerkleTree {
     }
 
     fn get_node_hash(&mut self, address: AddressType, log2_size: isize) -> HashType {
-            let level = &*self.get_level(log2_size).clone();
-            let mut address = address.clone();
-            address >>= log2_size;
-            if address >= ((1 as AddressType) << (self.get_log2_root_size() - log2_size)) {
-                panic!("log2_size is out of bounds");
-            }
-            if address < level.clone().len() as u64{
-                return level[address as usize].clone();
-            } else {
-                return Box::new(*self.m_pristine.get_hash(log2_size).clone());
-            }
+        let level = &*self.get_level(log2_size).clone();
+        let mut address = address.clone();
+        address >>= log2_size;
+        if address >= ((1 as AddressType) << (self.get_log2_root_size() - log2_size)) {
+            panic!("log2_size is out of bounds");
+        }
+        if address < level.clone().len() as u64{
+            return level[address as usize].clone();
+        } else {
+            return Box::new(*self.m_pristine.get_hash(log2_size).clone());
+        }
     }
 
     fn bubble_up(&mut self) {
@@ -122,10 +122,8 @@ impl CompleteMerkleTree {
             let next = self.get_level(log2_next_size);
             let mut first_entry = if !next.is_empty() {
                 next.len() - 1
-
             } else {
                 next.len()
-                
             };
             self.get_level_mut(log2_next_size).resize((prev.len() + 1) / 2, Box::new(Vec::new()));    
             assert!(first_entry <= self.get_level_mut(log2_next_size).len());
