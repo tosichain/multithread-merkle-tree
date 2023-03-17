@@ -2,8 +2,6 @@ use crate::pristine_merkle_tree::PristineMerkleTree;
 use crate::merkle_tree_proof::MerkleTreeProof;
 
 use std::ops::{DerefMut, Deref};
-use std::sync::{Arc, Mutex};
-
 use std::{cmp, ptr};
 use std::collections:: VecDeque;
 use std::alloc::{dealloc, Layout};
@@ -25,46 +23,60 @@ const M_PAGE_OFFSET_MASK: AddressType = !M_PAGE_INDEX_MASK;
 #[derive(Default, Debug)]
 pub struct MachineMerkleTree{
 
-    m_page_node_map: BTreeMap<AddressType, Arc<Mutex<TreeNode>>>,
+    m_page_node_map: BTreeMap<AddressType, *mut Box<TreeNode>>,
     pub m_root_storage: MRootStorage,
 
     #[cfg(feature = "merkle_dump_stats")]
     m_num_nodes: u64,    
 
-    m_root: Option<Arc<Mutex<TreeNode>>>,
+    m_root: Option<*mut Box<TreeNode>>,
 
     m_merkle_update_nonce: u64,
 
-    m_merkle_update_fifo: VecDeque<(isize, Arc<Mutex<TreeNode>>)>,
+    m_merkle_update_fifo: VecDeque<(isize, *mut Box<TreeNode>)>,
 
 }
+unsafe impl Send for MachineMerkleTree {}
+
 #[derive(Default, Debug)]
 
 pub struct  MRootStorage {
-    pub m_root_storage: Option<Arc<Mutex<TreeNode>>>,
+    pub m_root_storage: Option<Box<TreeNode>>,
     m_storage_mem: usize, 
 }
+
+unsafe impl Send for MRootStorage {}
+
 impl MRootStorage {
     pub fn destroy_merkle_tree(&mut self) {
-        self.destroy_merkle_tree_node(self.m_root_storage.as_ref().unwrap().lock().unwrap().child.as_ref().unwrap().get(0), MachineMerkleTree::get_log2_root_size() - 1);
-        self.destroy_merkle_tree_node(self.m_root_storage.as_ref().unwrap().lock().unwrap().child.as_ref().unwrap().get(1), MachineMerkleTree::get_log2_root_size() - 1);
+        self.destroy_merkle_tree_node(self.m_root_storage.as_ref().unwrap().child.as_ref().unwrap().get(0), MachineMerkleTree::get_log2_root_size() - 1);
+        self.destroy_merkle_tree_node(self.m_root_storage.as_ref().unwrap().child.as_ref().unwrap().get(1), MachineMerkleTree::get_log2_root_size() - 1);
         let storage = std::mem::size_of_val(&self.m_root_storage.as_ref());
-        self.m_root_storage.as_mut().unwrap().lock().unwrap().hash[0..std::mem::size_of_val(&storage.clone())].fill(0);
+        self.m_root_storage.as_mut().unwrap().hash[0..std::mem::size_of_val(&storage.clone())].fill(0);
        }
 
-       fn destroy_merkle_tree_node(&self, node: Option<&Arc<Mutex<TreeNode>>>, log2_size: isize) {
+       fn destroy_merkle_tree_node(&self, node: Option<&*mut Box<TreeNode>>, log2_size: isize) {
         if node.is_some() {
-            if log2_size > MachineMerkleTree::get_log2_page_size() &&  (*(*(*(node.as_ref().unwrap())))).lock().unwrap().child.as_ref().is_some(){
-                self.destroy_merkle_tree_node(Some(&(*(*(*(node.as_ref().unwrap())))).lock().unwrap().child.as_ref().unwrap()[0]), log2_size - 1);
-                self.destroy_merkle_tree_node(Some(&(*(*(*(node.as_ref().unwrap())))).lock().unwrap().child.as_ref().unwrap()[1]), log2_size - 1);
+            unsafe {
+                if log2_size > MachineMerkleTree::get_log2_page_size() &&  (*(*(*(node.as_ref().unwrap())))).child.as_ref().is_some(){
+                    self.destroy_merkle_tree_node(Some(&(*(*(*(node.as_ref().unwrap())))).child.as_ref().unwrap()[0]), log2_size - 1);
+                    self.destroy_merkle_tree_node(Some(&(*(*(*(node.as_ref().unwrap())))).child.as_ref().unwrap()[1]), log2_size - 1);
                
+                }
             }
-            
             #[cfg(feature = "merkle_dump_stats")]
             {
                 self.m_num_nodes -= 1;
             }
-            drop(node.unwrap());         
+        
+            let p = *node.unwrap();
+
+            unsafe {
+
+                ptr::drop_in_place(p);
+                dealloc(p as *mut u8, Layout::new::<TreeNode>());
+            }
+                
         }
     }
 
@@ -86,8 +98,8 @@ impl MRootStorage {
 #[derive(Default, Debug, Clone)]
 pub struct TreeNode{
     hash: HashType,               
-    parent: Option<Arc<Mutex<TreeNode>>>,                
-    pub child: Option<Vec<Arc<Mutex<TreeNode>>>>, 
+    parent: Option<*mut Box<TreeNode>>,                
+    pub child: Option<Vec<*mut Box<TreeNode>>>, 
     mark: u64,               
 }
 
@@ -116,14 +128,14 @@ impl <'a> MachineMerkleTree {
         return LOG2_PAGE_SIZE;
     }
 
-    fn get_page_node(&mut self, page_index: AddressType) -> Option<Arc<Mutex<TreeNode>>> {
+    fn get_page_node(&mut self, page_index: AddressType) -> Option<*mut Box<TreeNode>> {
         if self.m_page_node_map.last_key_value().is_none() {
             return None;
         }
-        let it: Option<&Arc<Mutex<TreeNode>>> = self.m_page_node_map.get(&page_index);
+        let it: Option<&*mut Box<TreeNode>> = self.m_page_node_map.get(&page_index);
 
         if it.is_some() {
-            return Some(Arc::clone(it.unwrap()));
+            return Some(*it.unwrap());
         } else {
             return None;
         }
@@ -133,56 +145,51 @@ impl <'a> MachineMerkleTree {
         return address & M_PAGE_OFFSET_MASK;
     }
 
-    fn set_page_node_map(&mut self, page_index: AddressType, node: Arc<Mutex<TreeNode>>) -> isize {
+    fn set_page_node_map(&mut self, page_index: AddressType, node: *mut Box<TreeNode>) -> isize {
         self.m_page_node_map.insert(page_index, node);
         return 1;
     }
 
-    fn create_node(&mut self) -> Option<Arc<Mutex<TreeNode>>>{
+    fn create_node(&mut self) -> Option<*mut Box<TreeNode>>{
 
 
         #[cfg(feature = "merkle_dump_stats")]
         {
             self.m_num_nodes += 1;
         }
-        return Some(Arc::new(Mutex::new(Default::default())));
+        return Some(Box::into_raw(Default::default()));
     }
 
 
-    fn new_page_node(&mut self, page_index: AddressType) -> Option<Arc<Mutex<TreeNode>>> {
+    fn new_page_node(&mut self, page_index: AddressType) -> Option<*mut Box<TreeNode>> {
 
         unsafe {let mut bit_mask: AddressType = (1u64) << (MachineMerkleTree::get_log2_root_size() - 1);
-        let mut node = self.m_root.clone();
-        let mut child: Option<Arc<Mutex<TreeNode>>> = None;
+        let mut node = self.m_root;
+        let mut child: Option<*mut Box<TreeNode>> = None;
         while true {
             let bit: isize = ((page_index & bit_mask) != 0) as isize;
 
-            if (*node.as_ref().unwrap().clone()).lock().unwrap().child.is_none() || Arc::as_ptr((*node.as_ref().unwrap().clone()).lock().unwrap().child.as_ref().unwrap().get(bit as usize).unwrap()).is_null(){
+            if (*node.unwrap().clone()).child.is_none() || (*node.unwrap().clone()).child.as_ref().unwrap().get(bit as usize).unwrap().is_null(){
 
                 child = self.create_node();
                 if child.is_none() {
                     return None;
                 }
 
-                (*(*child.as_mut().unwrap())).lock().unwrap().parent = Some(Arc::clone(node.as_ref().unwrap()));
-                {
-                    (*(*node.as_mut().unwrap())).lock().unwrap().child = Some(vec![Arc::new(Mutex::new(Default::default()));2]);
-                }
-                {
-                    (*node.as_mut().as_mut().unwrap()).lock().unwrap().child.as_mut().unwrap().push(Arc::clone(child.as_ref().unwrap()));
-                }
-                {
-                    (*node.as_mut().unwrap()).lock().unwrap().child.as_mut().unwrap().swap(bit as usize, 2);
-                }
-                {
-                    (*node.as_mut().unwrap()).lock().unwrap().child.as_mut().unwrap().swap_remove(2);
-                }
+                (*(*child.as_mut().unwrap())).parent = node;
+                (*(*node.as_mut().unwrap())).child = Some(vec![Box::into_raw(Default::default());2]);
+
+                (*node.unwrap()).child.as_mut().unwrap().push(child.unwrap());
+
+                (*node.unwrap()).child.as_mut().unwrap().swap(bit as usize, 2);
+
+                (*node.unwrap()).child.as_mut().unwrap().swap_remove(2);
             }
             else {
-                child = (*node.unwrap()).lock().unwrap().child.as_ref().unwrap().get(bit as usize).cloned();
+                child = (*node.unwrap()).child.as_ref().unwrap().get(bit as usize).cloned();
             }
         
-            node = child.clone();
+            node = child;
 
             bit_mask >>= 1;
             
@@ -190,7 +197,7 @@ impl <'a> MachineMerkleTree {
                 break;
             }
         }
-        if self.set_page_node_map(page_index, Arc::clone(node.as_ref().unwrap())) != 1 {
+        if self.set_page_node_map(page_index, node.unwrap()) != 1 {
 
             return None;
         }
@@ -200,7 +207,7 @@ impl <'a> MachineMerkleTree {
     }
     }
 
-    fn get_page_node_hash_start(&self, h: &mut HasherType, start: *const u8, log2_size: isize, hash: &mut HashType) {
+    fn get_page_node_hash_start(&self, h: &mut HasherType, start: *mut u8, log2_size: isize, hash: &mut HashType) {
         let mut log2_size = log2_size;
         if log2_size > MachineMerkleTree::get_log2_word_size() {
             let mut child0: HashType = Default::default();
@@ -236,32 +243,37 @@ impl <'a> MachineMerkleTree {
 
     pub fn get_page_node_hash_address(&mut self, page_index: AddressType, hash: &mut HashType) {
         assert!(page_index == MachineMerkleTree::get_page_index(page_index));
-        let node:Option<Arc<Mutex<TreeNode>>> = self.get_page_node(page_index);
+        let node:Option<*mut Box<TreeNode>> = self.get_page_node(page_index);
             if node.is_none() {
             *hash = MachineMerkleTree::get_pristine_hash(MachineMerkleTree::get_log2_page_size()).clone();
         } else {
-            *hash = (*node.unwrap()).lock().unwrap().hash.clone();
+            unsafe {
+                *hash = (*node.unwrap()).hash.clone();
+            }
         }
         
     }
     
-    fn get_child_hash(&self, child_log2_size: isize, node: Arc<Mutex<TreeNode>>,
+    fn get_child_hash(&self, child_log2_size: isize, node: *mut Box<TreeNode>,
         bit: isize) -> HashType{
-            let node = (*node).lock().unwrap();
-            let binding = node.child.as_ref().unwrap();
+        unsafe {
+            let binding = (*node).child.as_ref().unwrap();
             
-            let child: Option<&Arc<Mutex<TreeNode>>> = binding.get(bit as usize);
+            let child: Option<&*mut Box<TreeNode>> = binding.get(bit as usize);
             if child.is_some() {
-                return (*(*child.unwrap())).lock().unwrap().hash.clone();
+                    return (*(*child.unwrap())).hash.clone();
             }
+        }
         return MachineMerkleTree::get_pristine_hash(child_log2_size).clone();
     }
 
-    fn update_inner_node_hash(&self, h: &mut HasherType, log2_size: isize, node: Arc<Mutex<TreeNode>>) {
+    fn update_inner_node_hash(&self, h: &mut HasherType, log2_size: isize, node: *mut Box<TreeNode>) {
         h.reset();
-        h.update(self.get_child_hash(log2_size - 1, Arc::clone(&node), 0).as_slice());
-        h.update(self.get_child_hash(log2_size - 1, Arc::clone(&node), 1).as_slice());
-        Arc::clone(&node).lock().unwrap().hash = Box::new(h.clone().finalize().to_vec());
+        h.update(self.get_child_hash(log2_size - 1, node, 0).as_slice());
+        h.update(self.get_child_hash(log2_size - 1, node, 1).as_slice());
+        unsafe {
+            (*node).hash = Box::new(h.clone().finalize().to_vec());
+        }
     }
 
     fn dump_hash(hash: &HashType) {
@@ -276,7 +288,7 @@ impl <'a> MachineMerkleTree {
         return MachineMerkleTree::pristine_hashes().get_hash(log2_size).clone();
     } 
 
-    fn dump_merkle_tree(&self, node: Option<&Arc<Mutex<TreeNode>>>, address: u64, log2_size: isize) {
+    fn dump_merkle_tree(&self, node: Option<&*mut Box<TreeNode>>, address: u64, log2_size: isize) {
         for i in 0..MachineMerkleTree::get_log2_root_size() - log2_size {
             eprint!(" ");
         }
@@ -284,14 +296,10 @@ impl <'a> MachineMerkleTree {
         eprint!("0x{} : {} ", format!("{:0>16}", hex::encode(vec![address as u8])), format!("{:0>2}", log2_size));
         unsafe {if node.is_some()  {
             
-            MachineMerkleTree::dump_hash(&(*(*node.unwrap())).lock().unwrap().hash);
-            if log2_size > MachineMerkleTree::get_log2_page_size() && (*(*node.unwrap())).lock().unwrap().child.as_ref().is_some(){    
-                {        
-                    self.dump_merkle_tree((*(*node.unwrap())).lock().unwrap().child.as_ref().unwrap().get(0), address, log2_size - 1);
-                }
-                {
-                    self.dump_merkle_tree((*(*node.unwrap())).lock().unwrap().child.as_ref().unwrap().get(1), address + (1u64 << (log2_size - 1)), log2_size - 1);
-                }               
+            MachineMerkleTree::dump_hash(&(*(*node.unwrap())).hash);
+            if log2_size > MachineMerkleTree::get_log2_page_size() && (*(*node.unwrap())).as_ref().child.as_ref().is_some(){            
+                    self.dump_merkle_tree((*(*node.unwrap())).as_ref().child.as_ref().unwrap().get(0), address, log2_size - 1);
+                    self.dump_merkle_tree((*(*node.unwrap())).as_ref().child.as_ref().unwrap().get(1), address + (1u64 << (log2_size - 1)), log2_size - 1);               
             }
         
             } else {
@@ -360,12 +368,12 @@ impl <'a> MachineMerkleTree {
         if node.is_none() {
            return false;
         }
-        (*node.as_mut().unwrap()).lock().unwrap().hash = hash.clone();
-        if (*node.as_ref().unwrap()).lock().unwrap().parent.is_some() && (*(*node.as_ref().unwrap()).lock().unwrap().parent.as_ref().unwrap()).lock().unwrap().mark != self.m_merkle_update_nonce {
-            {
-                (*(*node.as_ref().unwrap()).lock().unwrap().parent.as_ref().unwrap()).lock().unwrap().mark = self.m_merkle_update_nonce;
-            }
-            &self.m_merkle_update_fifo.push_back((MachineMerkleTree::get_log2_page_size() + 1, Arc::clone((*node.as_ref().unwrap()).lock().unwrap().parent.as_ref().unwrap())));
+        unsafe {
+        (*node.unwrap()).hash = hash.clone();
+        if (*node.unwrap()).parent.is_some() && (*(*node.unwrap()).parent.unwrap()).mark != self.m_merkle_update_nonce {
+            (*(*node.unwrap()).parent.unwrap()).mark = self.m_merkle_update_nonce;
+            &self.m_merkle_update_fifo.push_back((MachineMerkleTree::get_log2_page_size() + 1, (*node.unwrap()).parent.unwrap()));
+        }
 
     }
         return true;
@@ -374,14 +382,14 @@ impl <'a> MachineMerkleTree {
     pub fn end_update(&mut self, h: &mut HasherType) -> bool {
         while !&self.m_merkle_update_fifo.is_empty() {
             let (log2_size, node) = self.m_merkle_update_fifo.front().unwrap().clone();
-            self.update_inner_node_hash(h, log2_size, Arc::clone(&node));
+            self.update_inner_node_hash(h, log2_size, node);
             self.m_merkle_update_fifo.pop_front();
-            if (*node.as_ref()).lock().unwrap().parent.is_some() && (*(*node).lock().unwrap().parent.as_ref().unwrap()).lock().unwrap().mark != self.m_merkle_update_nonce {
-                {
-                    self.m_merkle_update_fifo.push_back((log2_size.clone() + 1, Arc::clone((*node).lock().unwrap().parent.as_ref().unwrap())));
-                }
-                (*(*node).lock().unwrap().parent.as_mut().unwrap()).lock().unwrap().mark = self.m_merkle_update_nonce;
+            unsafe {
+            if (*node).parent.is_some() && (*(*node).parent.unwrap()).mark != self.m_merkle_update_nonce {
+                self.m_merkle_update_fifo.push_back((log2_size.clone() + 1, (*node).parent.unwrap()));
+                (*(*node).parent.unwrap()).mark = self.m_merkle_update_nonce;
             }
+        }
         }
         self.m_merkle_update_nonce += 1;
         return true;
@@ -392,10 +400,12 @@ impl <'a> MachineMerkleTree {
         m_root_storage: Some(Default::default()),
         m_storage_mem: std::mem::size_of_val(&self.m_root_storage),
     };
-    self.m_root = Some(Arc::clone(self.m_root_storage.m_root_storage.as_ref().unwrap()));
+    self.m_root = Some(self.m_root_storage.m_root_storage.as_mut().unwrap());
     self.m_merkle_update_nonce = 1;
-    (*self.m_root.as_mut().unwrap()).lock().unwrap().hash = MachineMerkleTree::get_pristine_hash(MachineMerkleTree::get_log2_root_size()).clone();
+    unsafe {
+    (*self.m_root.unwrap()).hash = MachineMerkleTree::get_pristine_hash(MachineMerkleTree::get_log2_root_size()).clone();
 
+    }
         #[cfg(feature = "merkle_dump_stats")]
         {
             self.m_num_nodes = 0;
@@ -410,7 +420,7 @@ impl <'a> MachineMerkleTree {
         }
 
         self.m_root_storage.destroy_merkle_tree();
-        self.m_root_storage.m_root_storage.as_mut().unwrap().lock().unwrap().hash[0..self.m_root_storage.m_storage_mem].fill(0);
+        self.m_root_storage.m_root_storage.as_mut().unwrap().hash[0..self.m_root_storage.m_storage_mem].fill(0);
 
         #[cfg(feature = "merkle_dump_stats")] {
         eprintln!("after destruction");
@@ -420,38 +430,39 @@ impl <'a> MachineMerkleTree {
     }
 
     pub fn get_root_hash(&self, hash: &mut HashType) {
-        *hash = (*self.m_root.as_ref().unwrap().clone()).lock().unwrap().hash.clone();
+        unsafe {
+            *hash = (*self.m_root.unwrap().clone()).hash.clone();
+        }
     }
 
     pub fn verify_tree(&self) -> bool {
         let mut h: HasherType = Default::default(); 
-        return self.verify_tree_with_arguments(&mut h, self.m_root.as_ref().unwrap(), MachineMerkleTree::get_log2_root_size());
+        return self.verify_tree_with_arguments(&mut h, self.m_root.unwrap().clone(), MachineMerkleTree::get_log2_root_size());
     }
 
-    fn verify_tree_with_arguments(&self, h: &mut HasherType, node: &Arc<Mutex<TreeNode>>, log2_size: isize) -> bool {
-           if (*node).lock().unwrap().hash.is_empty() {
+    fn verify_tree_with_arguments(&self, h: &mut HasherType, node: *mut Box<TreeNode>, log2_size: isize) -> bool {
+        unsafe {
+           if (*node).hash.is_empty() {
                 return true;
             }
         
              if log2_size > MachineMerkleTree::get_log2_page_size() {
                 let child_log2_size: isize = log2_size - 1;
-                let mut first_ok: bool;
-                {
-                    first_ok = self.verify_tree_with_arguments(h, &node.lock().unwrap().child.as_ref().unwrap()[0], child_log2_size);
-                }
-                let second_ok = self.verify_tree_with_arguments(h, &node.lock().unwrap().child.as_ref().unwrap()[1], child_log2_size);
+                let first_ok = self.verify_tree_with_arguments(h, (*node).child.as_ref().unwrap()[0], child_log2_size);
+                let second_ok = self.verify_tree_with_arguments(h, (*node).child.as_ref().unwrap()[1], child_log2_size);
                 if !first_ok || !second_ok {
                     return false;
                 }
                 let mut hash: HashType = Default::default();
                 h.reset();
-                h.update(self.get_child_hash(child_log2_size, node.clone(), 0).as_slice());
-                h.update(self.get_child_hash(child_log2_size, node.clone(), 1).as_slice());
+                h.update(self.get_child_hash(child_log2_size, node, 0).as_slice());
+                h.update(self.get_child_hash(child_log2_size, node, 1).as_slice());
                 hash = Box::new(h.clone().finalize().to_vec());
-                return hash.eq(&(*node).lock().unwrap().hash);
+                return hash.eq(&(*node).hash);
             } else {
                 return true;
             }
+        }
     }
 
     fn get_proof(&self, target_address: AddressType, log2_target_size: isize,
@@ -470,16 +481,19 @@ impl <'a> MachineMerkleTree {
     
         let log2_stop_size: isize = cmp::max(log2_target_size, MachineMerkleTree::get_log2_page_size());
         let mut log2_node_size: isize = MachineMerkleTree::get_log2_root_size();
-        let mut node: Option<Arc<Mutex<TreeNode>>> = self.m_root.clone();
-            while !(*node.as_ref().unwrap()).lock().unwrap().hash.is_empty() && log2_node_size > log2_stop_size {
+        let mut node: Option<*mut Box<TreeNode>> = self.m_root;
+        unsafe {
+            while !(*node.unwrap()).hash.is_empty() && log2_node_size > log2_stop_size {
                 let log2_child_size: isize = log2_node_size - 1;
                 let path_bit: isize = ((target_address & 1u64 << (log2_child_size)) != 0) as isize;
-                proof.set_sibling_hash(&self.get_child_hash(log2_child_size, Arc::clone(node.as_ref().unwrap()), !path_bit), log2_child_size);
-                node = Some(Arc::clone(&(*node.unwrap()).lock().unwrap().child.as_ref().unwrap()[path_bit as usize]));
+                proof.set_sibling_hash(&self.get_child_hash(log2_child_size, node.unwrap(), !path_bit), log2_child_size);
+                node = Some((*node.unwrap()).child.as_ref().unwrap()[path_bit as usize]);
                 log2_node_size = log2_child_size;
             }
+        }
         
-        if (*node.as_ref().unwrap()).lock().unwrap().hash.is_empty() {
+        unsafe {
+        if (*node.unwrap()).hash.is_empty() {
             if page_data != 0 {
                 panic!("inconsistent merkle tree");
             }
@@ -491,7 +505,7 @@ impl <'a> MachineMerkleTree {
             proof.set_target_hash(&MachineMerkleTree::get_pristine_hash(log2_target_size));
 
         } else if log2_node_size == MachineMerkleTree::get_log2_page_size() {
-            assert!(!(*node.as_ref().unwrap()).lock().unwrap().hash.is_empty());
+            assert!(!(*node.unwrap()).hash.is_empty());
             let mut page_hash: HashType = Default::default();
             if log2_target_size < MachineMerkleTree::get_log2_page_size() {
 
@@ -508,20 +522,21 @@ impl <'a> MachineMerkleTree {
                     }
                     proof.set_target_hash(&MachineMerkleTree::get_pristine_hash(log2_target_size));
                 }
-                if !(*node.as_ref().unwrap()).lock().unwrap().hash.eq(&page_hash) {
+                if !(*node.unwrap()).hash.eq(&page_hash) {
                     panic!("inconsistent merkle tree");
                 }
 
             } else {
-                proof.set_target_hash(&(*node.as_ref().unwrap()).lock().unwrap().hash);
+                proof.set_target_hash(&(*node.unwrap()).hash);
             }
         } else {
-            assert!(!(*node.as_ref().unwrap()).lock().unwrap().hash.is_empty() && log2_node_size == log2_target_size);
-            proof.set_target_hash(&(*node.as_ref().unwrap()).lock().unwrap().hash);
+            assert!(!(*node.unwrap()).hash.is_empty() && log2_node_size == log2_target_size);
+            proof.set_target_hash(&(*node.unwrap()).hash);
         }
     
         proof.set_target_address(target_address);
-        proof.set_root_hash(&(*(*self.m_root.as_ref().unwrap())).lock().unwrap().hash); 
+        proof.set_root_hash(&(*(*self.m_root.as_ref().unwrap())).hash); 
+}
 
         #[cfg(not(feature = "ndebug"))]
         if !proof.verify(&mut HasherType::new()) {
