@@ -67,7 +67,6 @@ fn main() {
     let leaf_hashes: Arc<Mutex<Vec<HashType>>> = Arc::new(Mutex::new(Vec::new()));
     {machine_merkle_tree.lock().unwrap().begin_update();}
 
-    let leaf_count: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
     let h: Arc<Mutex<HasherType>> = Arc::new(Mutex::new(Default::default()));
     let buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let mut reader = BufReader::new(File::open(&input_name).unwrap());
@@ -92,7 +91,7 @@ fn main() {
             let mut extra = 0;
             if index == 3 {
                 extra = 1;
-                //loop_to+= buffer_len % 4;
+                loop_to+= buffer_len % 4;
             }
             iterations =  buffer_len / leaf_size as usize / 4 * leaf_size as usize ; 
 
@@ -119,42 +118,33 @@ fn main() {
                     let leaf_hash = get_leaf_hash(leaf_buf.as_mut_ptr(), log2_leaf_size, log2_word_size);
                     let mut leaf_hashes = leaf_hashes.lock().unwrap();
                     leaf_hashes.push(leaf_hash.clone());
-                    //let mut tree_from_scratch = FullMerkleTree::full_merkle_tree_with_leaves(log2_root_size, log2_leaf_size, log2_word_size, &leaf_hashes);
+                    
                     let mut tree_from_scratch: FullMerkleTree = Default::default();
-
                     tree_from_scratch.full_merkle_tree_with_leaves(log2_root_size, log2_leaf_size, log2_word_size, &leaf_hashes);
+
                     let mut complete_tree = complete_tree.lock().unwrap();
                     complete_tree.push_back(&leaf_hash);
                     print_hash(&complete_tree.get_root_hash());
 
                     std::mem::drop(leaf_hashes);
-                    /*if &complete_tree.get_root_hash() != tree_from_scratch.get_root_hash() {
+                    if &complete_tree.get_root_hash() != tree_from_scratch.get_root_hash() {
                         error(format!("mismatch in root hash for complete tree and tree from scratch\n"));
                         panic!();
-                    }*/
+                    }
                     std::mem::drop(complete_tree);
 
                     let mut back_tree = back_tree.lock().unwrap();
-                    let mut back_leaf_proof = back_tree.get_next_leaf_proof();
 
                     back_tree.push_back(&leaf_hash);
 
-                    //let mut tree_from_scratch_compare = Arc::clone(&tree_from_scratch);
-                    //let mut tree_from_scratch_compare = tree_from_scratch.lock().unwrap();
-
-                    /*if &back_tree.get_root_hash() != tree_from_scratch.get_root_hash() {
+                    if &back_tree.get_root_hash() != tree_from_scratch.get_root_hash() {
                         error(format!("root hash = {:?}\n tree from scratch hash = {:?}\n", &back_tree.get_root_hash(), &tree_from_scratch.get_root_hash()));
                         panic!();
-                    }*/
+                    }
 
-                    
-                    //std::mem::drop(tree_from_scratch_compare);
-
-                    //std::mem::drop(tree_from_scratch);
                     std::mem::drop(back_tree);
                     let mut machine_merkle_tree = machine_merkle_tree.lock().unwrap();
                     machine_merkle_tree.update_page_node_hash(i as u64, &leaf_hash);
-                    machine_merkle_tree.get_page_node_hash_address(i as u64, &mut hash_machine2);
                     std::mem::drop(machine_merkle_tree);
             }
 
@@ -165,18 +155,18 @@ fn main() {
     for handle in handles {
         handle.join().unwrap();
     }
-    println!("finish");
 
     let mut hash_root = HashType::default();
     let mut machine_merkle_tree = machine_merkle_tree.lock().unwrap();
 
     machine_merkle_tree.get_root_hash(&mut hash_root);
     let mut h = h.lock().unwrap();
-    //machine_merkle_tree.end_update(&mut h);
+    machine_merkle_tree.end_update(&mut h);
     std::mem::drop(h);
-    println!("finish");
 
     println!("machine tree verification: {:?}", machine_merkle_tree.verify_tree());
+    println!("machine tree root hash: {:?}", hash_root);
+
     std::mem::drop(machine_merkle_tree);
     let elapsed = now.elapsed();
     
