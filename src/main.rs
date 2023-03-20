@@ -1,3 +1,4 @@
+#![feature(thread_id_value)]
 mod back_merkle_tree;
 mod complete_merkle_tree;
 mod full_merkle_tree;
@@ -9,6 +10,7 @@ mod pristine_merkle_tree;
 use std::io::BufRead;
 use std::io::*;
 use std::fs::*;
+use std::thread::ThreadId;
 
 use crate::complete_merkle_tree::*;
 use crate::machine_merkle_tree::MachineMerkleTree;
@@ -54,7 +56,9 @@ fn main() {
             }
     }
 
-    let leaf_size = 1u64 << log2_leaf_size;
+    //let leaf_size = 1u64 << log2_leaf_size;
+    let leaf_size = 8;
+
     let back_tree: Arc<Mutex<BackMerkleTree>> = Arc::new(Mutex::new(Default::default()));
     {
         back_tree.lock().unwrap().back_merkle_tree(log2_root_size, log2_leaf_size, log2_word_size);
@@ -71,7 +75,7 @@ fn main() {
         let mut loop_to = 0;
         let mut iterations: usize;
 
-        for index in 0..4 {
+        for index in 0..2 {
             let buffer = Arc::clone(&buffer);
             let back_tree = Arc::clone(&back_tree);
             let buffer_ = buffer.lock().unwrap();
@@ -85,11 +89,16 @@ fn main() {
             iterations =  buffer_len / 4 ; 
 
             std::mem::drop(buffer_);
+            let mut start = 0;
             loop_to +=  buffer_len / 4 ; 
             println!("loop_to-iterations {:?}, loop_to+extra {:?}, buffer_len {:?}", loop_to-iterations, loop_to+extra, buffer_len);
 
             let handle = thread::spawn(move || {
-            for i in (loop_to-iterations..loop_to+extra).step_by(leaf_size as usize) {
+                if thread::current().id().as_u64().get() == 3 {
+                    start = 8;
+                }
+            for i in (start..buffer_len).step_by(leaf_size*2 as usize) {
+            //for i in (loop_to-iterations..loop_to+extra).step_by(leaf_size as usize) {
             //for i in (0..buffer_len).step_by(leaf_size as usize) {
                 //println!("loop_to-iterations {:?}, loop_to+extra {:?}", loop_to-iterations, loop_to+extra);
 
@@ -112,7 +121,7 @@ fn main() {
                     let mut back_tree = back_tree.lock().unwrap();
 
                     back_tree.push_back(leaf_hash);
-                    println!("index {:?}, thread {:?}", i, thread::current().id());
+                    println!("index {:?}..{:?}, thread {:?}", i, i+8, thread::current().id());
                     print_hash(&back_tree.get_root_hash());
 
                     std::mem::drop(back_tree);
