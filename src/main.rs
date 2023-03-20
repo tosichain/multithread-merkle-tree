@@ -82,12 +82,17 @@ fn main() {
                 extra = 1;
                 loop_to+= buffer_len % 4;
             }
-            iterations =  buffer_len / leaf_size as usize / 4 * leaf_size as usize ; 
+            iterations =  buffer_len / 4 ; 
 
             std::mem::drop(buffer_);
-            loop_to +=  buffer_len / leaf_size as usize / 4 * leaf_size as usize; 
+            loop_to +=  buffer_len / 4 ; 
+            println!("loop_to-iterations {:?}, loop_to+extra {:?}, buffer_len {:?}", loop_to-iterations, loop_to+extra, buffer_len);
+
             let handle = thread::spawn(move || {
             for i in (loop_to-iterations..loop_to+extra).step_by(leaf_size as usize) {
+            //for i in (0..buffer_len).step_by(leaf_size as usize) {
+                //println!("loop_to-iterations {:?}, loop_to+extra {:?}", loop_to-iterations, loop_to+extra);
+
                 let mut leaf_buf: Vec<u8> = Vec::new();
                 let buffer = buffer.lock().unwrap();
 
