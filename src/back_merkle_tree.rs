@@ -53,22 +53,22 @@ impl BackMerkleTree {
         
     }
 
-    pub fn push_back(&mut self, leaf_hash: &HashType) {
+    pub fn push_back(&mut self, leaf_hash: HashType) {
         let mut h: HasherType = Default::default();
-        let mut right = leaf_hash.clone();
+        let mut right = leaf_hash;
         if self.m_leaf_count >= self.m_max_leaves {
             panic!("too many leaves");
         }
         let depth: isize = self.m_log2_root_size - self.m_log2_leaf_size;
         for i in 0..depth+1 {
             if (self.m_leaf_count & ((1 as AddressType) << i)) != 0 {
-                let left = &self.m_context[i as usize];
+                let left = &self.m_context[i as usize].clone();
                 h.reset();
                 h.update(left.as_slice());
                 h.update(right.as_slice());
                 right = Box::new(h.clone().finalize().to_vec());
             } else {
-                self.m_context[i as usize] = Box::new(*right.clone());
+                self.m_context[i as usize] = right.clone();
                 break;
             }
         }

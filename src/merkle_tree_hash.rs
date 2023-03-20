@@ -90,8 +90,6 @@ fn get_leaf_hash_hasher(h: &mut HasherType, leaf_data: *mut u8, log2_leaf_size: 
     } else {
         let mut leaf: HashType = Default::default();
         get_word_hash(h,leaf_data, &mut leaf);
-        //print_hash(&leaf);
-
         return leaf;
     }
     

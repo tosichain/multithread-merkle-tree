@@ -11,8 +11,6 @@ type ProofType = MerkleTreeProof;
 use std::thread;
 use std::sync::Arc;
 use std::sync::Mutex;
-use rayon::{Scope, ThreadPool};
-use rayon::ThreadPoolBuilder;
 #[derive(Default, Debug, Clone)]
 pub struct FullMerkleTree {
 
