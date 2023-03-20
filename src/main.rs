@@ -56,8 +56,8 @@ fn main() {
             }
     }
 
-    //let leaf_size = 1u64 << log2_leaf_size;
-    let leaf_size = 8;
+    let leaf_size = 1u64 << log2_leaf_size;
+    //let leaf_size = 8;
 
     let back_tree: Arc<Mutex<BackMerkleTree>> = Arc::new(Mutex::new(Default::default()));
     {
@@ -97,7 +97,7 @@ fn main() {
                 if thread::current().id().as_u64().get() == 3 {
                     start = 8;
                 }
-            for i in (start..buffer_len).step_by(leaf_size*2 as usize) {
+            for i in (start..buffer_len).step_by(leaf_size as usize * 2) {
             //for i in (loop_to-iterations..loop_to+extra).step_by(leaf_size as usize) {
             //for i in (0..buffer_len).step_by(leaf_size as usize) {
                 //println!("loop_to-iterations {:?}, loop_to+extra {:?}", loop_to-iterations, loop_to+extra);
