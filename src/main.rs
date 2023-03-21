@@ -76,10 +76,12 @@ fn main() {
 
     let back_tree = Arc::clone(&back_tree);
     let mut handles = vec![];
-    let total_threads = 2;
+    let queued_hashes :Arc<Mutex<Vec<(u64 , Box<Vec<u8>>)>>> = Arc::new(Mutex::new(Default::default()));
+    let total_threads = 17;
     for thread_index in 0..total_threads {
         let buffer = Arc::clone(&buffer);
-        let back_tree = Arc::clone(&back_tree);
+        //let back_tree = Arc::clone(&back_tree);
+        let queued_hashes = Arc::clone(&queued_hashes);
 
         let handle = thread::spawn(move || {
             let buffer_len = buffer.len() as u64;
@@ -99,11 +101,11 @@ fn main() {
                 }
                 let leaf_hash = get_leaf_hash(leaf_slice.as_ptr(), log2_leaf_size, log2_word_size);
 
-                let mut back_tree = back_tree.lock().unwrap();
-
-                back_tree.push_back(leaf_hash);
+                let mut queued_hashes = queued_hashes.lock().unwrap();
+                queued_hashes.push((i, leaf_hash));
                 std::mem::drop(buffer);
-                std::mem::drop(back_tree);
+                std::mem::drop(queued_hashes);
+
             }
         });
         handles.push(handle);
@@ -113,9 +115,20 @@ fn main() {
         handle.join().unwrap();
     }
 
-    let elapsed = now.elapsed();
+    let mut queued_hashes = queued_hashes.lock().unwrap();
+    let mut back_tree = back_tree.lock().unwrap();
+
+    queued_hashes.sort();
+    for (_, value) in &*queued_hashes {
+        back_tree.push_back(value.clone());
+   }
+   std::mem::drop(queued_hashes);
+
     println!("Back Tree Root Hash:");
 
-    print_hash(&back_tree.lock().unwrap().get_root_hash());
+    print_hash(&back_tree.get_root_hash());
+    std::mem::drop(back_tree);
+    let elapsed = now.elapsed();
+
     println!("Elapsed: {:.2?}", elapsed);
 }
