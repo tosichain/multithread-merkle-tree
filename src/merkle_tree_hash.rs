@@ -64,7 +64,7 @@ pub fn error(fmt: String) {
     process::exit(1);
 }
 
-fn get_word_hash(h: &mut HasherType, word: *mut u8, hash: &mut HashType) {
+fn get_word_hash(h: &mut HasherType, word: *const u8, hash: &mut HashType) {
     h.reset();
 
     unsafe {
@@ -75,7 +75,7 @@ fn get_word_hash(h: &mut HasherType, word: *mut u8, hash: &mut HashType) {
 
 }
 
-fn get_leaf_hash_hasher(h: &mut HasherType, leaf_data: *mut u8, log2_leaf_size: isize, log2_word_size: isize) -> HashType {
+fn get_leaf_hash_hasher(h: &mut HasherType, leaf_data: *const u8, log2_leaf_size: isize, log2_word_size: isize) -> HashType {
     assert!(log2_leaf_size >= log2_word_size);
     if log2_leaf_size > log2_word_size {
         let mut left: HashType = get_leaf_hash_hasher(h, leaf_data, log2_leaf_size - 1, log2_word_size);
@@ -95,7 +95,7 @@ fn get_leaf_hash_hasher(h: &mut HasherType, leaf_data: *mut u8, log2_leaf_size: 
     
 }
 
-pub fn get_leaf_hash(leaf_data: *mut u8, log2_leaf_size: isize, log2_word_size: isize) -> HashType {
+pub fn get_leaf_hash(leaf_data: *const u8, log2_leaf_size: isize, log2_word_size: isize) -> HashType {
     let mut h: HasherType = Default::default(); 
     return get_leaf_hash_hasher(&mut h, leaf_data, log2_leaf_size, log2_word_size);
 }

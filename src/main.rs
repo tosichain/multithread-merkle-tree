@@ -59,7 +59,6 @@ fn main() {
     }
 
     let leaf_size = 1u64 << log2_leaf_size;
-    //let leaf_size = 8;
 
     let back_tree: Arc<Mutex<BackMerkleTree>> = Arc::new(Mutex::new(Default::default()));
     {
@@ -69,77 +68,41 @@ fn main() {
             .back_merkle_tree(log2_root_size, log2_leaf_size, log2_word_size);
     }
 
-    let h: Arc<Mutex<HasherType>> = Arc::new(Mutex::new(Default::default()));
-    let buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut buffer_value: Vec<u8> = Vec::new();
     let mut reader = BufReader::new(File::open(&input_name).unwrap());
 
-    reader.read_to_end(&mut buffer.lock().unwrap()).unwrap();
-    let back_tree = Arc::clone(&back_tree);
-    let h = Arc::clone(&h);
-    let mut handles = vec![];
-    let mut loop_to = 0;
-    let mut iterations: usize;
+    reader.read_to_end(&mut buffer_value).unwrap();
+    let buffer: Arc<Vec<u8>> = Arc::new(buffer_value);
 
-    for index in 0..2 {
+    let back_tree = Arc::clone(&back_tree);
+    let mut handles = vec![];
+    let total_threads = 2;
+    for thread_index in 0..total_threads {
         let buffer = Arc::clone(&buffer);
         let back_tree = Arc::clone(&back_tree);
-        let buffer_ = buffer.lock().unwrap();
-
-        let buffer_len = buffer_.len();
-        let mut extra = 0;
-        if index == 3 {
-            extra = 1;
-            loop_to += buffer_len % 4;
-        }
-        iterations = buffer_len / 4;
-
-        std::mem::drop(buffer_);
-        let mut start = 0;
-        loop_to += buffer_len / 4;
-        println!(
-            "loop_to-iterations {:?}, loop_to+extra {:?}, buffer_len {:?}",
-            loop_to - iterations,
-            loop_to + extra,
-            buffer_len
-        );
 
         let handle = thread::spawn(move || {
-            if thread::current().id().as_u64().get() == 3 {
-                start = 8;
-            }
+            let buffer_len = buffer.len() as u64;
+            let start = leaf_size * thread_index;
 
-            for i in (start..buffer_len).step_by(leaf_size as usize * 2) {
-                //for i in (loop_to-iterations..loop_to+extra).step_by(leaf_size as usize) {
-                //for i in (0..buffer_len).step_by(leaf_size as usize) {
-                //println!("loop_to-iterations {:?}, loop_to+extra {:?}", loop_to-iterations, loop_to+extra);
+            for i in (start..buffer_len).step_by((leaf_size * total_threads) as usize) {
+                let mut leaf_slice: Vec<u8> = Vec::new();
+                let buffer = Arc::clone(&buffer);
 
-                let mut leaf_buf: Vec<u8> = Vec::new();
-                let buffer = buffer.lock().unwrap();
-
-                if (i + leaf_size as usize) < buffer.len() {
-                    leaf_buf = buffer[i..(i + leaf_size as usize) as usize].to_vec();
-                } else if i < buffer.len() {
-                    leaf_buf = buffer[i..buffer.len()].to_vec();
-
-                    while leaf_size as usize - leaf_buf.len() as usize > 0 {
-                        leaf_buf.push(0);
+                if (i + leaf_size) < buffer_len {
+                    leaf_slice = buffer[i as usize..(i + leaf_size) as usize].to_vec();
+                } else if i < buffer_len {
+                    leaf_slice = buffer[i as usize..buffer_len as usize].to_vec();
+                    while leaf_size as usize - leaf_slice.len() as usize > 0 {
+                        leaf_slice.push(0);
                     }
                 }
-                std::mem::drop(buffer);
-                let mut leaf_hash =
-                    get_leaf_hash(leaf_buf.as_mut_ptr(), log2_leaf_size, log2_word_size);
+                let leaf_hash = get_leaf_hash(leaf_slice.as_ptr(), log2_leaf_size, log2_word_size);
 
                 let mut back_tree = back_tree.lock().unwrap();
 
                 back_tree.push_back(leaf_hash);
-                println!(
-                    "index {:?}..{:?}, thread {:?}",
-                    i,
-                    i + 8,
-                    thread::current().id()
-                );
-                print_hash(&back_tree.get_root_hash());
-
+                std::mem::drop(buffer);
                 std::mem::drop(back_tree);
             }
         });
@@ -150,7 +113,6 @@ fn main() {
         handle.join().unwrap();
     }
 
-    let mut hash_root = HashType::default();
     let elapsed = now.elapsed();
     println!("Back Tree Root Hash:");
 
