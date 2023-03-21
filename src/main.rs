@@ -7,16 +7,17 @@ mod merkle_tree_hash;
 mod merkle_tree_proof;
 mod pristine_merkle_tree;
 
-use std::fs::*;
-use std::io::BufRead;
-use std::io::*;
-use std::thread::ThreadId;
-
 use crate::back_merkle_tree::*;
 use crate::complete_merkle_tree::*;
 use crate::full_merkle_tree::*;
 use crate::machine_merkle_tree::MachineMerkleTree;
 use crate::merkle_tree_hash::*;
+use clap::{value_parser, Arg, Command};
+use fmmap::sync::MmapFile;
+use fmmap::MmapFileExt;
+use std::fs::*;
+use std::io::BufRead;
+use std::io::*;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -24,12 +25,42 @@ type HashType = Box<Vec<u8>>;
 type HasherType = sha3::Keccak256;
 
 fn main() {
+    let matches = Command::new("prog")
+        .arg(
+            Arg::new("input")
+                .long("input")
+                .required(true)
+                .help("input file"),
+        )
+        .arg(
+            Arg::new("log2-word-size")
+                .long("log2-word-size")
+                .value_parser(value_parser!(isize))
+                .required(true)
+                .help("value for log2-word-size"),
+        )
+        .arg(
+            Arg::new("log2_leaf_size")
+                .long("log2_leaf_size")
+                .value_parser(value_parser!(isize))
+                .required(true)
+                .help("value for log2_leaf_size"),
+        )
+        .arg(
+            Arg::new("log2_root_size")
+                .long("log2_root_size")
+                .value_parser(value_parser!(isize))
+                .required(true)
+                .help("value for log2_root_size"),
+        )
+        .get_matches();
+
     use std::time::Instant;
     let now = Instant::now();
 
-    let log2_word_size: isize = 3;
-    let log2_leaf_size: isize = 12;
-    let log2_root_size: isize = 30;
+    let log2_word_size: isize = matches.get_one::<isize>("log2-word-size").unwrap().clone();
+    let log2_leaf_size: isize = matches.get_one::<isize>("log2_leaf_size").unwrap().clone();
+    let log2_root_size: isize = matches.get_one::<isize>("log2_root_size").unwrap().clone();
 
     if log2_leaf_size < log2_word_size
         || log2_leaf_size >= 64
@@ -43,21 +74,8 @@ fn main() {
         panic!();
     }
 
-    let mut input_name: String = String::from("test-merkle-tree-hash");
-
-    let mut input_file: Box<dyn BufRead> = Box::new(BufReader::new(stdin()));
-    if !input_name.is_empty() {
-        if !File::open(&input_name).is_ok() {
-            error(format!("unable to open input file {}", &input_name));
-            panic!();
-        }
-
-        match File::open(&input_name) {
-            Ok(input) => input_file = Box::new(BufReader::new(input)),
-            Err(_) => error(format!("error reading input")),
-        }
-    }
-
+    let mut input_name: String = matches.get_one::<String>("input").unwrap().clone();
+    let mut file = Arc::new(MmapFile::open(input_name.clone()).unwrap());
     let leaf_size = 1u64 << log2_leaf_size;
 
     let back_tree: Arc<Mutex<BackMerkleTree>> = Arc::new(Mutex::new(Default::default()));
@@ -68,33 +86,29 @@ fn main() {
             .back_merkle_tree(log2_root_size, log2_leaf_size, log2_word_size);
     }
 
-    let mut buffer_value: Vec<u8> = Vec::new();
-    let mut reader = BufReader::new(File::open(&input_name).unwrap());
-
-    reader.read_to_end(&mut buffer_value).unwrap();
-    let buffer: Arc<Vec<u8>> = Arc::new(buffer_value);
-
     let back_tree = Arc::clone(&back_tree);
     let mut handles = vec![];
-    let queued_hashes :Arc<Mutex<Vec<(u64 , Box<Vec<u8>>)>>> = Arc::new(Mutex::new(Default::default()));
-    let total_threads = 17;
-    for thread_index in 0..total_threads {
-        let buffer = Arc::clone(&buffer);
-        //let back_tree = Arc::clone(&back_tree);
+    let queued_hashes: Arc<Mutex<Vec<(u64, Box<Vec<u8>>)>>> =
+        Arc::new(Mutex::new(Default::default()));
+    for thread_index in 0..thread::available_parallelism().unwrap().get() as u64 {
+        let file = Arc::clone(&file);
         let queued_hashes = Arc::clone(&queued_hashes);
 
         let handle = thread::spawn(move || {
-            let buffer_len = buffer.len() as u64;
+            let buffer_len = file.len() as u64;
             let start = leaf_size * thread_index;
 
-            for i in (start..buffer_len).step_by((leaf_size * total_threads) as usize) {
+            for i in (start..buffer_len).step_by((leaf_size * thread::available_parallelism().unwrap().get() as u64) as usize) {
                 let mut leaf_slice: Vec<u8> = Vec::new();
-                let buffer = Arc::clone(&buffer);
+                let file = Arc::clone(&file);
 
                 if (i + leaf_size) < buffer_len {
-                    leaf_slice = buffer[i as usize..(i + leaf_size) as usize].to_vec();
+                    leaf_slice = file.bytes(i as usize, leaf_size as usize).unwrap().to_vec();
                 } else if i < buffer_len {
-                    leaf_slice = buffer[i as usize..buffer_len as usize].to_vec();
+                    leaf_slice = file
+                        .bytes(i as usize, (buffer_len - i) as usize)
+                        .unwrap()
+                        .to_vec();
                     while leaf_size as usize - leaf_slice.len() as usize > 0 {
                         leaf_slice.push(0);
                     }
@@ -103,9 +117,7 @@ fn main() {
 
                 let mut queued_hashes = queued_hashes.lock().unwrap();
                 queued_hashes.push((i, leaf_hash));
-                std::mem::drop(buffer);
                 std::mem::drop(queued_hashes);
-
             }
         });
         handles.push(handle);
@@ -121,9 +133,8 @@ fn main() {
     queued_hashes.sort();
     for (_, value) in &*queued_hashes {
         back_tree.push_back(value.clone());
-   }
-   std::mem::drop(queued_hashes);
-
+    }
+    std::mem::drop(queued_hashes);
     println!("Back Tree Root Hash:");
 
     print_hash(&back_tree.get_root_hash());
