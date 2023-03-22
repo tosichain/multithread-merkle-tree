@@ -93,15 +93,15 @@ fn main() {
     for thread_index in 0..thread::available_parallelism().unwrap().get() as u64 {
         let file = Arc::clone(&file);
         let queued_hashes = Arc::clone(&queued_hashes);
-
+        let back_tree = Arc::clone(&back_tree);
         let handle = thread::spawn(move || {
             let buffer_len = file.len() as u64;
             let start = leaf_size * thread_index;
-
-            for i in (start..buffer_len).step_by((leaf_size * thread::available_parallelism().unwrap().get() as u64) as usize) {
+            for i in (start..buffer_len).step_by(
+                (leaf_size * thread::available_parallelism().unwrap().get() as u64) as usize,
+            ) {
                 let mut leaf_slice: Vec<u8> = Vec::new();
                 let file = Arc::clone(&file);
-
                 if (i + leaf_size) < buffer_len {
                     leaf_slice = file.bytes(i as usize, leaf_size as usize).unwrap().to_vec();
                 } else if i < buffer_len {
@@ -113,7 +113,15 @@ fn main() {
                         leaf_slice.push(0);
                     }
                 }
-                let leaf_hash = get_leaf_hash(leaf_slice.as_ptr(), log2_leaf_size, log2_word_size);
+                let mut leaf_hash: Box<Vec<u8>>;
+                if leaf_slice.to_vec().into_iter().all(|b| b == 0) {
+                    let back_tree = back_tree.lock().unwrap();
+
+                    leaf_hash = back_tree.m_pristine_hashes.get_hash(log2_leaf_size).clone();
+                    std::mem::drop(back_tree);
+                } else {
+                    leaf_hash = get_leaf_hash(leaf_slice.as_ptr(), log2_leaf_size, log2_word_size);
+                }
 
                 let mut queued_hashes = queued_hashes.lock().unwrap();
                 queued_hashes.push((i, leaf_hash));
