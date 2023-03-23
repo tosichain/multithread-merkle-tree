@@ -1,4 +1,3 @@
-#![feature(thread_id_value)]
 mod back_merkle_tree;
 mod complete_merkle_tree;
 mod full_merkle_tree;
