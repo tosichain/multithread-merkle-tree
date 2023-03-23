@@ -14,9 +14,6 @@ use crate::merkle_tree_hash::*;
 use clap::{value_parser, Arg, Command};
 use fmmap::sync::MmapFile;
 use fmmap::MmapFileExt;
-use std::fs::*;
-use std::io::BufRead;
-use std::io::*;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -39,18 +36,18 @@ fn main() {
                 .help("value for log2-word-size"),
         )
         .arg(
-            Arg::new("log2_leaf_size")
-                .long("log2_leaf_size")
+            Arg::new("log2-leaf-size")
+                .long("log2-leaf-size")
                 .value_parser(value_parser!(isize))
                 .required(true)
-                .help("value for log2_leaf_size"),
+                .help("value for log2-leaf-size"),
         )
         .arg(
-            Arg::new("log2_root_size")
-                .long("log2_root_size")
+            Arg::new("log2-root-size")
+                .long("log2-root-size")
                 .value_parser(value_parser!(isize))
                 .required(true)
-                .help("value for log2_root_size"),
+                .help("value for log2-root-size"),
         )
         .get_matches();
 
@@ -58,8 +55,8 @@ fn main() {
     let now = Instant::now();
 
     let log2_word_size: isize = matches.get_one::<isize>("log2-word-size").unwrap().clone();
-    let log2_leaf_size: isize = matches.get_one::<isize>("log2_leaf_size").unwrap().clone();
-    let log2_root_size: isize = matches.get_one::<isize>("log2_root_size").unwrap().clone();
+    let log2_leaf_size: isize = matches.get_one::<isize>("log2-leaf-size").unwrap().clone();
+    let log2_root_size: isize = matches.get_one::<isize>("log2-root-size").unwrap().clone();
 
     if log2_leaf_size < log2_word_size
         || log2_leaf_size >= 64
@@ -142,11 +139,6 @@ fn main() {
         back_tree.push_back(value.clone());
     }
     std::mem::drop(queued_hashes);
-    println!("Back Tree Root Hash:");
-
     print_hash(&back_tree.get_root_hash());
     std::mem::drop(back_tree);
-    let elapsed = now.elapsed();
-
-    println!("Elapsed: {:.2?}", elapsed);
 }
